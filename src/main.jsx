@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { createClient } from '@supabase/supabase-js'
 import './styles.css'
@@ -9,7 +9,7 @@ const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabase
 
 const Brand = () => <div className="brand">Nailed <i>It!</i></div>
 
-function Auth({ initialMode = 'signup', onBack }) {
+function Auth({ initialMode = 'signup', onBack, onAuthenticated }) {
   const [mode, setMode] = useState(initialMode)
   const [form, setForm] = useState({ name: '', username: '', email: '', password: '' })
   const [message, setMessage] = useState('')
@@ -28,7 +28,8 @@ function Auth({ initialMode = 'signup', onBack }) {
     const result = mode === 'signup'
       ? await supabase.auth.signUp({ email: form.email, password: form.password, options: { data: { display_name: form.name, username: form.username } } })
       : await supabase.auth.signInWithPassword({ email: form.email, password: form.password })
-    setMessage(result.error ? result.error.message : mode === 'signup' ? 'Check your email to finish joining.' : 'Welcome back!')
+    setMessage(result.error ? result.error.message : mode === 'signup' && !result.data.session ? 'Check your email to finish joining.' : 'Welcome to your circle!')
+    if (result.data?.session) onAuthenticated(result.data.session)
     setBusy(false)
   }
 
@@ -53,6 +54,49 @@ function Auth({ initialMode = 'signup', onBack }) {
       <p className="terms">By continuing, you agree to keep the circle kind.</p>
     </div>
   </div>
+}
+
+function Feed({ session, onSignOut }) {
+  const [file, setFile] = useState(null)
+  const [caption, setCaption] = useState('')
+  const [preview, setPreview] = useState('')
+  const [status, setStatus] = useState('')
+  const [posting, setPosting] = useState(false)
+
+  const choose = (event) => {
+    const selected = event.target.files?.[0]
+    if (!selected) return
+    if (selected.size > 10 * 1024 * 1024) return setStatus('Choose an image smaller than 10 MB.')
+    setFile(selected)
+    setPreview(URL.createObjectURL(selected))
+    setStatus('')
+  }
+  const publish = async () => {
+    if (!file || !supabase) return
+    setPosting(true)
+    setStatus('')
+    const extension = file.name.split('.').pop()?.toLowerCase() || 'jpg'
+    const path = `${session.user.id}/${crypto.randomUUID()}.${extension}`
+    const upload = await supabase.storage.from('nail-posts').upload(path, file, { contentType: file.type, upsert: false })
+    if (upload.error) { setStatus(upload.error.message); setPosting(false); return }
+    const post = await supabase.from('posts').insert({ user_id: session.user.id, image_path: path, caption: caption.trim() || null })
+    if (post.error) { await supabase.storage.from('nail-posts').remove([path]); setStatus(post.error.message); setPosting(false); return }
+    setStatus('Your fresh set is in the circle!')
+    setFile(null); setPreview(''); setCaption(''); setPosting(false)
+  }
+  return <main className="feed-view">
+    <header><Brand /><button onClick={onSignOut}>SIGN OUT</button></header>
+    <section className="feed-title"><p className="kicker">YOUR PRIVATE CIRCLE</p><h1>Show us the <i>set.</i></h1><p>Upload from your camera or photo library. Only signed-in members can see posts.</p></section>
+    <section className="composer">
+      <label className={`image-picker ${preview ? 'has-image' : ''}`}>
+        {preview ? <img src={preview} alt="Your selected nail photo preview" /> : <><b>＋</b><span>ADD A NAIL PHOTO</span><small>Camera or photo library · up to 10 MB</small></>}
+        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" onChange={choose} />
+      </label>
+      {file && <><textarea maxLength="500" value={caption} onChange={event => setCaption(event.target.value)} placeholder="Tell the circle about this set…" /><button className="primary" disabled={posting} onClick={publish}>{posting ? 'POSTING…' : 'POST TO MY CIRCLE'} <span>→</span></button></>}
+      {status && <p className="form-message" role="status">{status}</p>}
+    </section>
+    <section className="first-post"><span>♡</span><b>Your circle starts here.</b><p>The next iteration will show everyone’s posts, reactions, and comments in this feed.</p></section>
+  </main>
 }
 
 function Welcome({ onStart, onLogin }) {
@@ -88,7 +132,15 @@ function Welcome({ onStart, onLogin }) {
 
 function App() {
   const [view, setView] = useState('welcome')
-  if (view !== 'welcome') return <div className="app-shell"><Auth initialMode={view} onBack={() => setView('welcome')} /></div>
+  const [session, setSession] = useState(null)
+  useEffect(() => {
+    if (!supabase) return
+    supabase.auth.getSession().then(({ data }) => setSession(data.session))
+    const { data } = supabase.auth.onAuthStateChange((_event, next) => setSession(next))
+    return () => data.subscription.unsubscribe()
+  }, [])
+  if (session) return <div className="app-shell"><Feed session={session} onSignOut={async () => { await supabase.auth.signOut(); setView('welcome') }} /></div>
+  if (view !== 'welcome') return <div className="app-shell"><Auth initialMode={view} onBack={() => setView('welcome')} onAuthenticated={setSession} /></div>
   return <Welcome onStart={() => setView('signup')} onLogin={() => setView('login')} />
 }
 
