@@ -60,6 +60,12 @@ function Feed({ session, onSignOut }) {
   const [tab, setTab] = useState('home')
   const [posts, setPosts] = useState([])
   const [loading, setLoading] = useState(true)
+  const [profile, setProfile] = useState(null)
+  const [bio, setBio] = useState('')
+  const [avatarPreview, setAvatarPreview] = useState('')
+  const [profileBusy, setProfileBusy] = useState(false)
+  const [openComments, setOpenComments] = useState(null)
+  const [commentDraft, setCommentDraft] = useState('')
   const [file, setFile] = useState(null)
   const [caption, setCaption] = useState('')
   const [preview, setPreview] = useState('')
@@ -68,17 +74,70 @@ function Feed({ session, onSignOut }) {
 
   const loadPosts = async () => {
     setLoading(true)
-    const result = await supabase.from('posts').select('id,user_id,image_path,caption,created_at,profiles(display_name,username)').order('created_at', { ascending: false })
+    const result = await supabase.from('posts').select('id,user_id,image_path,caption,created_at,profiles:profiles!posts_user_id_fkey(display_name,username,avatar_path,bio),likes(user_id),comments(id,user_id,body,created_at,profiles:profiles!comments_user_id_fkey(display_name,username))').order('created_at', { ascending: false })
     if (result.error) { setStatus(result.error.message); setLoading(false); return }
     const hydrated = await Promise.all(result.data.map(async post => {
       const signed = await supabase.storage.from('nail-posts').createSignedUrl(post.image_path, 3600)
-      return { ...post, imageUrl: signed.data?.signedUrl || '' }
+      let avatarUrl = ''
+      if (post.profiles?.avatar_path) {
+        const avatar = await supabase.storage.from('avatars').createSignedUrl(post.profiles.avatar_path, 3600)
+        avatarUrl = avatar.data?.signedUrl || ''
+      }
+      return { ...post, imageUrl: signed.data?.signedUrl || '', avatarUrl }
     }))
     setPosts(hydrated)
     setLoading(false)
   }
 
-  useEffect(() => { loadPosts() }, [])
+  const loadProfile = async () => {
+    const result = await supabase.from('profiles').select('display_name,username,bio,avatar_path').eq('id', session.user.id).single()
+    if (result.error) return setStatus(result.error.message)
+    let avatarUrl = ''
+    if (result.data.avatar_path) {
+      const signed = await supabase.storage.from('avatars').createSignedUrl(result.data.avatar_path, 3600)
+      avatarUrl = signed.data?.signedUrl || ''
+    }
+    setProfile({ ...result.data, avatarUrl })
+    setBio(result.data.bio || '')
+    setAvatarPreview(avatarUrl)
+  }
+
+  useEffect(() => { loadPosts(); loadProfile() }, [])
+
+  const toggleLike = async post => {
+    const liked = post.likes?.some(like => like.user_id === session.user.id)
+    const result = liked
+      ? await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', session.user.id)
+      : await supabase.from('likes').insert({ post_id: post.id, user_id: session.user.id })
+    if (result.error) return setStatus(result.error.message)
+    await loadPosts()
+  }
+
+  const addComment = async postId => {
+    const body = commentDraft.trim()
+    if (!body) return
+    const result = await supabase.from('comments').insert({ post_id: postId, user_id: session.user.id, body })
+    if (result.error) return setStatus(result.error.message)
+    setCommentDraft('')
+    await loadPosts()
+  }
+
+  const updateProfile = async avatarFile => {
+    setProfileBusy(true)
+    setStatus('')
+    let avatarPath = profile?.avatar_path || null
+    if (avatarFile) {
+      if (avatarFile.size > 5 * 1024 * 1024) { setStatus('Choose a profile image smaller than 5 MB.'); setProfileBusy(false); return }
+      const extension = avatarFile.name.split('.').pop()?.toLowerCase() || 'jpg'
+      avatarPath = `${session.user.id}/avatar.${extension}`
+      const upload = await supabase.storage.from('avatars').upload(avatarPath, avatarFile, { contentType: avatarFile.type, upsert: true })
+      if (upload.error) { setStatus(upload.error.message); setProfileBusy(false); return }
+    }
+    const result = await supabase.from('profiles').update({ bio: bio.trim() || null, avatar_path: avatarPath, updated_at: new Date().toISOString() }).eq('id', session.user.id)
+    if (result.error) setStatus(result.error.message)
+    else { setStatus('Profile updated.'); await loadProfile(); await loadPosts() }
+    setProfileBusy(false)
+  }
 
   const choose = (event) => {
     const selected = event.target.files?.[0]
@@ -115,13 +174,28 @@ function Feed({ session, onSignOut }) {
       {file && <><textarea maxLength="500" value={caption} onChange={event => setCaption(event.target.value)} placeholder="Tell the circle about this set…" /><button className="primary" disabled={posting} onClick={publish}>{posting ? 'POSTING…' : 'POST TO MY CIRCLE'} <span>→</span></button></>}
       {status && <p className="form-message" role="status">{status}</p>}
     </section></> : <>
+      {tab === 'profile' && <section className="profile-card">
+        <label className="avatar-picker">
+          {avatarPreview ? <img src={avatarPreview} alt="Your profile" /> : <span>{(profile?.display_name || 'N').slice(0,1).toUpperCase()}</span>}
+          <b>＋</b><input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={event => { const picked = event.target.files?.[0]; if (picked) { setAvatarPreview(URL.createObjectURL(picked)); updateProfile(picked) } }} />
+        </label>
+        <div className="profile-identity"><h2>{profile?.display_name || 'Nailed It member'}</h2><p>@{profile?.username || 'freshset'}</p></div>
+        <textarea maxLength="160" value={bio} onChange={event => setBio(event.target.value)} placeholder="Add a short bio…" />
+        <button className="profile-save" disabled={profileBusy} onClick={() => updateProfile()}>{profileBusy ? 'SAVING…' : 'SAVE PROFILE'}</button>
+        {status && <p className="form-message" role="status">{status}</p>}
+      </section>}
       <section className="stream-title"><div><p className="kicker">{tab === 'profile' ? 'YOUR PROFILE' : 'YOUR PRIVATE CIRCLE'}</p><h1>{tab === 'profile' ? 'My sets.' : 'Fresh sets.'}</h1></div><span>{visiblePosts.length} {visiblePosts.length === 1 ? 'POST' : 'POSTS'}</span></section>
       <section className="post-stream">
         {loading ? <p className="loading">Loading the circle…</p> : visiblePosts.length ? visiblePosts.map(post => <article className="feed-post" key={post.id}>
-          <div className="post-author"><div className="avatar">{(post.profiles?.display_name || 'N').slice(0,1).toUpperCase()}</div><div><b>{post.profiles?.display_name || 'Nailed It member'}</b><small>@{post.profiles?.username || 'freshset'} · {new Date(post.created_at).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</small></div><span>•••</span></div>
+          <div className="post-author"><div className="avatar">{post.avatarUrl ? <img src={post.avatarUrl} alt="" /> : (post.profiles?.display_name || 'N').slice(0,1).toUpperCase()}</div><div><b>{post.profiles?.display_name || 'Nailed It member'}</b><small>@{post.profiles?.username || 'freshset'} · {new Date(post.created_at).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</small></div><span>•••</span></div>
           {post.imageUrl && <img src={post.imageUrl} alt={post.caption || 'A fresh nail set'} />}
-          <div className="reactions"><span>♡ LIKE</span><span>◯ COMMENT</span><span>⌑ SAVE</span></div>
+          <div className="reactions"><button className={post.likes?.some(like => like.user_id === session.user.id) ? 'liked' : ''} onClick={() => toggleLike(post)}>{post.likes?.some(like => like.user_id === session.user.id) ? '♥' : '♡'} {post.likes?.length || 0}</button><button onClick={() => setOpenComments(openComments === post.id ? null : post.id)}>◯ {post.comments?.length || 0}</button></div>
           {post.caption && <p className="caption"><b>{post.profiles?.display_name || 'Member'}</b> {post.caption}</p>}
+          {openComments === post.id && <div className="comments">
+            {post.comments?.map(comment => <p key={comment.id}><b>{comment.profiles?.display_name || 'Member'}</b> {comment.body}</p>)}
+            {!post.comments?.length && <small>Be the first to say something.</small>}
+            <div className="comment-form"><input maxLength="500" value={commentDraft} onChange={event => setCommentDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') addComment(post.id) }} placeholder="Add a comment…" /><button onClick={() => addComment(post.id)}>POST</button></div>
+          </div>}
         </article>) : <div className="first-post"><span>♡</span><b>{tab === 'profile' ? 'No sets posted yet.' : 'Your circle is waiting.'}</b><p>Tap the pink button below to share the first fresh set.</p></div>}
       </section>
     </>}
@@ -154,7 +228,7 @@ function Welcome({ onStart, onLogin }) {
         <article>
           <div className="avatar">M</div><div><b>Maya</b><small>@mayamani · 12m</small></div><span className="dots">•••</span>
           <img src="/images/friends-fresh-sets.png" alt="Pink and black nail inspiration" />
-          <div className="reactions"><span>♥ 24</span><span>◯ 8</span><span>♡ SAVE</span></div>
+          <div className="reactions"><span>♥ 24</span><span>◯ 8</span></div>
           <p><b>Maya</b> Everyone picked a different vibe and somehow it works 💅</p>
         </article>
       </section>
