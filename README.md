@@ -17,4 +17,4 @@ npm run dev
 npm run build
 ```
 
-The site is a Vite + React application ready for Vercel deployment. Supabase will be introduced when the first social feature requires persisted data.
+The site is a Vite + React application deployed with Vercel. Its account flow uses Supabase Auth when `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are configured. The initial profile schema and row-level security policies live in `supabase/migrations/`.

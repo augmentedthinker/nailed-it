@@ -1,99 +1,95 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { createRoot } from 'react-dom/client'
+import { createClient } from '@supabase/supabase-js'
 import './styles.css'
 
-const Sparkle = ({ className = '' }) => (
-  <svg className={`sparkle ${className}`} viewBox="0 0 40 40" aria-hidden="true">
-    <path d="M20 0c1.8 12.8 7.2 18.2 20 20-12.8 1.8-18.2 7.2-20 20C18.2 27.2 12.8 21.8 0 20 12.8 18.2 18.2 12.8 20 0Z" />
-  </svg>
-)
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
 
-const Nail = ({ color, accent, rotate = 0, height = 150 }) => (
-  <div className="finger" style={{ transform: `rotate(${rotate}deg)` }}>
-    <div className="nail" style={{ '--nail': color, '--accent': accent, height }}>
-      <span className="nail-shine" />
+const Brand = () => <div className="brand">Nailed <i>It!</i></div>
+
+function Auth({ initialMode = 'signup', onBack }) {
+  const [mode, setMode] = useState(initialMode)
+  const [form, setForm] = useState({ name: '', username: '', email: '', password: '' })
+  const [message, setMessage] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const update = (event) => setForm({ ...form, [event.target.name]: event.target.value })
+  const submit = async (event) => {
+    event.preventDefault()
+    setBusy(true)
+    setMessage('')
+    if (!supabase) {
+      setMessage('The account screens are ready. Connect Supabase to begin inviting the first circle.')
+      setBusy(false)
+      return
+    }
+    const result = mode === 'signup'
+      ? await supabase.auth.signUp({ email: form.email, password: form.password, options: { data: { display_name: form.name, username: form.username } } })
+      : await supabase.auth.signInWithPassword({ email: form.email, password: form.password })
+    setMessage(result.error ? result.error.message : mode === 'signup' ? 'Check your email to finish joining.' : 'Welcome back!')
+    setBusy(false)
+  }
+
+  return <div className="auth-view">
+    <button className="back" onClick={onBack} aria-label="Back">←</button>
+    <div className="auth-image"><img src="/images/friends-fresh-sets.png" alt="Friends showing four fresh nail sets" /></div>
+    <div className="auth-panel">
+      <Brand />
+      <p className="kicker">YOUR NAILS. YOUR PEOPLE.</p>
+      <h1>{mode === 'signup' ? <>Join your<br/><i>circle.</i></> : <>Good to see<br/><i>you again.</i></>}</h1>
+      <form onSubmit={submit}>
+        {mode === 'signup' && <>
+          <label>NAME<input required name="name" autoComplete="name" value={form.name} onChange={update} placeholder="Your name" /></label>
+          <label>USERNAME<div className="username"><span>@</span><input required name="username" autoComplete="username" value={form.username} onChange={update} placeholder="freshset" /></div></label>
+        </>}
+        <label>EMAIL<input required type="email" name="email" autoComplete="email" value={form.email} onChange={update} placeholder="you@example.com" /></label>
+        <label>PASSWORD<input required minLength="8" type="password" name="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} value={form.password} onChange={update} placeholder="At least 8 characters" /></label>
+        <button className="primary" disabled={busy}>{busy ? 'ONE SEC…' : mode === 'signup' ? 'CREATE ACCOUNT  →' : 'SIGN IN  →'}</button>
+      </form>
+      {message && <p className="form-message" role="status">{message}</p>}
+      <p className="switch">{mode === 'signup' ? 'Already have an account?' : 'New to Nailed It?'} <button onClick={() => { setMode(mode === 'signup' ? 'login' : 'signup'); setMessage('') }}>{mode === 'signup' ? 'Sign in' : 'Create account'}</button></p>
+      <p className="terms">By continuing, you agree to keep the circle kind.</p>
     </div>
   </div>
-)
+}
+
+function Welcome({ onStart, onLogin }) {
+  return <div className="welcome">
+    <div className="desktop-photo left-photo"><img src="/images/friends-fresh-sets.png" alt="" /></div>
+    <main className="phone-stage">
+      <header><Brand /><button onClick={onLogin}>SIGN IN</button></header>
+      <section className="hero-photo">
+        <img src="/images/friends-fresh-sets.png" alt="Four friends showing their fresh nail art" />
+        <div className="photo-tag">@THEPOLISHCIRCLE · JUST NOW</div>
+      </section>
+      <section className="intro">
+        <p className="kicker">A PRIVATE NAIL SOCIAL</p>
+        <h1>Your fresh set<br/>deserves its <i>moment.</i></h1>
+        <p className="body-copy">Post the color. Tag your artist. Save the inspiration. Hype the friends who always understand the assignment.</p>
+        <button className="primary" onClick={onStart}>JOIN THE FIRST CIRCLE <span>→</span></button>
+        <button className="plain" onClick={onLogin}>I ALREADY HAVE AN ACCOUNT</button>
+      </section>
+      <section className="preview">
+        <div className="preview-head"><b>WHAT'S HAPPENING</b><span>PRIVATE BY DEFAULT</span></div>
+        <article>
+          <div className="avatar">M</div><div><b>Maya</b><small>@mayamani · 12m</small></div><span className="dots">•••</span>
+          <img src="/images/friends-fresh-sets.png" alt="Pink and black nail inspiration" />
+          <div className="reactions"><span>♥ 24</span><span>◯ 8</span><span>♡ SAVE</span></div>
+          <p><b>Maya</b> Everyone picked a different vibe and somehow it works 💅</p>
+        </article>
+      </section>
+      <footer><Brand /><p>THE GROUP CHAT, BUT FOR THE SET.</p></footer>
+    </main>
+    <div className="desktop-photo right-photo"><img src="/images/friends-fresh-sets.png" alt="" /></div>
+  </div>
+}
 
 function App() {
-  return (
-    <main>
-      <nav className="nav shell" aria-label="Main navigation">
-        <a className="brand" href="#top" aria-label="Nailed It home">
-          <span>Nailed</span><em>It!</em>
-        </a>
-        <a className="nav-cta" href="#early-access">Get early access <span>↗</span></a>
-      </nav>
-
-      <section className="hero shell" id="top">
-        <div className="hero-copy">
-          <p className="eyebrow"><span>✦</span> YOUR NAILS. YOUR PEOPLE.</p>
-          <h1>Fresh set?<br /><i>Say less.</i></h1>
-          <p className="lede">The private social space for sharing every color, chrome, charm, and tiny masterpiece with the friends who get it.</p>
-          <div className="hero-actions">
-            <a className="button primary" href="#early-access">Join the first circle <span>→</span></a>
-            <a className="text-link" href="#how">See how it works <span>↓</span></a>
-          </div>
-          <div className="social-proof">
-            <div className="avatars" aria-hidden="true">
-              <span>J</span><span>M</span><span>K</span><span>+</span>
-            </div>
-            <p>Made for the group chat<br /><strong>that always asks to see the set.</strong></p>
-          </div>
-        </div>
-
-        <div className="hero-art" aria-label="An illustrated hand showing a colorful manicure">
-          <div className="blob blob-one" />
-          <div className="blob blob-two" />
-          <Sparkle className="spark-one" />
-          <Sparkle className="spark-two" />
-          <div className="comment comment-one"><span>obsessed</span> 😍</div>
-          <div className="comment comment-two">That chrome!! <span>♥</span></div>
-          <div className="hand">
-            <Nail color="#ff4f87" accent="#ffd4df" rotate={-10} height={136} />
-            <Nail color="#8d65dc" accent="#f7b6ff" rotate={-3} height={160} />
-            <Nail color="#f2b84b" accent="#fff4bd" rotate={3} height={170} />
-            <Nail color="#74c6b2" accent="#d5fff3" rotate={9} height={148} />
-          </div>
-          <div className="polish">
-            <div className="polish-cap" /><div className="polish-bottle"><span>NAILED<br />IT</span></div>
-          </div>
-        </div>
-      </section>
-
-      <section className="ticker" aria-label="Nail styles">
-        <div>FRESH SETS <b>✦</b> REAL FRIENDS <b>✦</b> TINY ART <b>✦</b> BIG ENERGY <b>✦</b> FRESH SETS <b>✦</b> REAL FRIENDS</div>
-      </section>
-
-      <section className="how shell" id="how">
-        <p className="eyebrow"><span>✦</span> IT'S YOUR CIRCLE</p>
-        <div className="section-heading">
-          <h2>Less feed.<br /><i>More feeling.</i></h2>
-          <p>No chasing followers. No algorithm deciding who sees your post. Just a small, joyful place for the people whose opinions you actually want.</p>
-        </div>
-        <div className="feature-grid">
-          <article><b>01</b><span className="feature-icon coral">⌁</span><h3>Post the set</h3><p>Snap a photo, tag the color or artist, and give your new nails their moment.</p></article>
-          <article><b>02</b><span className="feature-icon violet">☺</span><h3>Share your circle</h3><p>Keep it close. Invite friends into private groups made for swapping inspiration.</p></article>
-          <article><b>03</b><span className="feature-icon yellow">♡</span><h3>Hype each other</h3><p>Comment, react, save ideas—and always know who understood the assignment.</p></article>
-        </div>
-      </section>
-
-      <section className="invite shell" id="early-access">
-        <Sparkle className="invite-spark" />
-        <p className="eyebrow">COMING TO A GROUP CHAT NEAR YOU</p>
-        <h2>We’re starting small.<br /><i>You could be first.</i></h2>
-        <p>Nailed It is being shaped with one real circle of friends before we open the doors wider.</p>
-        <a className="button dark" href="mailto:hello@nailedit.social?subject=Nailed%20It%20early%20access">Tell me when it’s ready <span>→</span></a>
-      </section>
-
-      <footer className="shell">
-        <a className="brand" href="#top"><span>Nailed</span><em>It!</em></a>
-        <p>Made with good taste and fresh polish.</p>
-        <p>© 2026 Nailed It</p>
-      </footer>
-    </main>
-  )
+  const [view, setView] = useState('welcome')
+  if (view !== 'welcome') return <div className="app-shell"><Auth initialMode={view} onBack={() => setView('welcome')} /></div>
+  return <Welcome onStart={() => setView('signup')} onLogin={() => setView('login')} />
 }
 
 createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>)
