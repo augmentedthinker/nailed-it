@@ -90,7 +90,7 @@ function Feed({ session, onSignOut }) {
     <section className="composer">
       <label className={`image-picker ${preview ? 'has-image' : ''}`}>
         {preview ? <img src={preview} alt="Your selected nail photo preview" /> : <><b>＋</b><span>ADD A NAIL PHOTO</span><small>Camera or photo library · up to 10 MB</small></>}
-        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" capture="environment" onChange={choose} />
+        <input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={choose} />
       </label>
       {file && <><textarea maxLength="500" value={caption} onChange={event => setCaption(event.target.value)} placeholder="Tell the circle about this set…" /><button className="primary" disabled={posting} onClick={publish}>{posting ? 'POSTING…' : 'POST TO MY CIRCLE'} <span>→</span></button></>}
       {status && <p className="form-message" role="status">{status}</p>}
