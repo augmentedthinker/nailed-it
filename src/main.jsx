@@ -57,11 +57,28 @@ function Auth({ initialMode = 'signup', onBack, onAuthenticated }) {
 }
 
 function Feed({ session, onSignOut }) {
+  const [tab, setTab] = useState('home')
+  const [posts, setPosts] = useState([])
+  const [loading, setLoading] = useState(true)
   const [file, setFile] = useState(null)
   const [caption, setCaption] = useState('')
   const [preview, setPreview] = useState('')
   const [status, setStatus] = useState('')
   const [posting, setPosting] = useState(false)
+
+  const loadPosts = async () => {
+    setLoading(true)
+    const result = await supabase.from('posts').select('id,user_id,image_path,caption,created_at,profiles(display_name,username)').order('created_at', { ascending: false })
+    if (result.error) { setStatus(result.error.message); setLoading(false); return }
+    const hydrated = await Promise.all(result.data.map(async post => {
+      const signed = await supabase.storage.from('nail-posts').createSignedUrl(post.image_path, 3600)
+      return { ...post, imageUrl: signed.data?.signedUrl || '' }
+    }))
+    setPosts(hydrated)
+    setLoading(false)
+  }
+
+  useEffect(() => { loadPosts() }, [])
 
   const choose = (event) => {
     const selected = event.target.files?.[0]
@@ -83,10 +100,13 @@ function Feed({ session, onSignOut }) {
     if (post.error) { await supabase.storage.from('nail-posts').remove([path]); setStatus(post.error.message); setPosting(false); return }
     setStatus('Your fresh set is in the circle!')
     setFile(null); setPreview(''); setCaption(''); setPosting(false)
+    await loadPosts()
+    setTab('home')
   }
+  const visiblePosts = tab === 'profile' ? posts.filter(post => post.user_id === session.user.id) : posts
   return <main className="feed-view">
     <header><Brand /><button onClick={onSignOut}>SIGN OUT</button></header>
-    <section className="feed-title"><p className="kicker">YOUR PRIVATE CIRCLE</p><h1>Show us the <i>set.</i></h1><p>Upload from your camera or photo library. Only signed-in members can see posts.</p></section>
+    {tab === 'add' ? <><section className="feed-title"><p className="kicker">NEW POST</p><h1>Show us the <i>set.</i></h1><p>Choose a photo from your camera or library. Only signed-in members can see it.</p></section>
     <section className="composer">
       <label className={`image-picker ${preview ? 'has-image' : ''}`}>
         {preview ? <img src={preview} alt="Your selected nail photo preview" /> : <><b>＋</b><span>ADD A NAIL PHOTO</span><small>Camera or photo library · up to 10 MB</small></>}
@@ -94,8 +114,22 @@ function Feed({ session, onSignOut }) {
       </label>
       {file && <><textarea maxLength="500" value={caption} onChange={event => setCaption(event.target.value)} placeholder="Tell the circle about this set…" /><button className="primary" disabled={posting} onClick={publish}>{posting ? 'POSTING…' : 'POST TO MY CIRCLE'} <span>→</span></button></>}
       {status && <p className="form-message" role="status">{status}</p>}
-    </section>
-    <section className="first-post"><span>♡</span><b>Your circle starts here.</b><p>The next iteration will show everyone’s posts, reactions, and comments in this feed.</p></section>
+    </section></> : <>
+      <section className="stream-title"><div><p className="kicker">{tab === 'profile' ? 'YOUR PROFILE' : 'YOUR PRIVATE CIRCLE'}</p><h1>{tab === 'profile' ? 'My sets.' : 'Fresh sets.'}</h1></div><span>{visiblePosts.length} {visiblePosts.length === 1 ? 'POST' : 'POSTS'}</span></section>
+      <section className="post-stream">
+        {loading ? <p className="loading">Loading the circle…</p> : visiblePosts.length ? visiblePosts.map(post => <article className="feed-post" key={post.id}>
+          <div className="post-author"><div className="avatar">{(post.profiles?.display_name || 'N').slice(0,1).toUpperCase()}</div><div><b>{post.profiles?.display_name || 'Nailed It member'}</b><small>@{post.profiles?.username || 'freshset'} · {new Date(post.created_at).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</small></div><span>•••</span></div>
+          {post.imageUrl && <img src={post.imageUrl} alt={post.caption || 'A fresh nail set'} />}
+          <div className="reactions"><span>♡ LIKE</span><span>◯ COMMENT</span><span>⌑ SAVE</span></div>
+          {post.caption && <p className="caption"><b>{post.profiles?.display_name || 'Member'}</b> {post.caption}</p>}
+        </article>) : <div className="first-post"><span>♡</span><b>{tab === 'profile' ? 'No sets posted yet.' : 'Your circle is waiting.'}</b><p>Tap the pink button below to share the first fresh set.</p></div>}
+      </section>
+    </>}
+    <nav className="tab-bar" aria-label="App navigation">
+      <button className={tab === 'home' ? 'active' : ''} onClick={() => { setTab('home'); setStatus('') }}><span>⌂</span>HOME</button>
+      <button className="add-tab" onClick={() => { setTab('add'); setStatus('') }} aria-label="Create a post">＋</button>
+      <button className={tab === 'profile' ? 'active' : ''} onClick={() => { setTab('profile'); setStatus('') }}><span>○</span>PROFILE</button>
+    </nav>
   </main>
 }
 
