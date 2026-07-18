@@ -106,20 +106,27 @@ function Feed({ session, onSignOut }) {
 
   const toggleLike = async post => {
     const liked = post.likes?.some(like => like.user_id === session.user.id)
+    setPosts(current => current.map(item => item.id === post.id ? {
+      ...item,
+      likes: liked ? item.likes.filter(like => like.user_id !== session.user.id) : [...(item.likes || []), { user_id: session.user.id }]
+    } : item))
     const result = liked
       ? await supabase.from('likes').delete().eq('post_id', post.id).eq('user_id', session.user.id)
       : await supabase.from('likes').insert({ post_id: post.id, user_id: session.user.id })
-    if (result.error) return setStatus(result.error.message)
-    await loadPosts()
+    if (result.error) {
+      setStatus(result.error.message)
+      setPosts(current => current.map(item => item.id === post.id ? { ...item, likes: post.likes || [] } : item))
+    }
   }
 
   const addComment = async postId => {
     const body = commentDraft.trim()
     if (!body) return
-    const result = await supabase.from('comments').insert({ post_id: postId, user_id: session.user.id, body })
+    const result = await supabase.from('comments').insert({ post_id: postId, user_id: session.user.id, body }).select('id,user_id,body,created_at').single()
     if (result.error) return setStatus(result.error.message)
+    const newComment = { ...result.data, profiles: { display_name: profile?.display_name || 'Member', username: profile?.username || 'freshset' } }
+    setPosts(current => current.map(post => post.id === postId ? { ...post, comments: [...(post.comments || []), newComment] } : post))
     setCommentDraft('')
-    await loadPosts()
   }
 
   const updateProfile = async avatarFile => {
@@ -191,8 +198,12 @@ function Feed({ session, onSignOut }) {
           {post.imageUrl && <img src={post.imageUrl} alt={post.caption || 'A fresh nail set'} />}
           <div className="reactions"><button className={post.likes?.some(like => like.user_id === session.user.id) ? 'liked' : ''} onClick={() => toggleLike(post)}>{post.likes?.some(like => like.user_id === session.user.id) ? '♥' : '♡'} {post.likes?.length || 0}</button><button onClick={() => setOpenComments(openComments === post.id ? null : post.id)}>◯ {post.comments?.length || 0}</button></div>
           {post.caption && <p className="caption"><b>{post.profiles?.display_name || 'Member'}</b> {post.caption}</p>}
+          {openComments !== post.id && post.comments?.length > 0 && <div className="comment-preview">
+            {[...post.comments].sort((a,b) => a.created_at.localeCompare(b.created_at)).slice(-3).map(comment => <p key={comment.id}><b>{comment.profiles?.display_name || 'Member'}</b> {comment.body}</p>)}
+            {post.comments.length > 3 && <button onClick={() => setOpenComments(post.id)}>View all {post.comments.length} comments</button>}
+          </div>}
           {openComments === post.id && <div className="comments">
-            {post.comments?.map(comment => <p key={comment.id}><b>{comment.profiles?.display_name || 'Member'}</b> {comment.body}</p>)}
+            {[...(post.comments || [])].sort((a,b) => a.created_at.localeCompare(b.created_at)).map(comment => <p key={comment.id}><b>{comment.profiles?.display_name || 'Member'}</b> {comment.body}</p>)}
             {!post.comments?.length && <small>Be the first to say something.</small>}
             <div className="comment-form"><input maxLength="500" value={commentDraft} onChange={event => setCommentDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') addComment(post.id) }} placeholder="Add a comment…" /><button onClick={() => addComment(post.id)}>POST</button></div>
           </div>}
