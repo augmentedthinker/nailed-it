@@ -5,7 +5,14 @@ import './styles.css'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY
+const vapidPublicKey = import.meta.env.VITE_VAPID_PUBLIC_KEY
 const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null
+
+const decodeVapidKey = value => {
+  const padding = '='.repeat((4 - value.length % 4) % 4)
+  const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/')
+  return Uint8Array.from(atob(base64), character => character.charCodeAt(0))
+}
 
 const Brand = () => <div className="brand">Nailed <i>It!</i></div>
 
@@ -67,6 +74,8 @@ function Feed({ session, onSignOut }) {
   const [profileBusy, setProfileBusy] = useState(false)
   const [openComments, setOpenComments] = useState(null)
   const [commentDraft, setCommentDraft] = useState('')
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
   const [file, setFile] = useState(null)
   const [caption, setCaption] = useState('')
   const [preview, setPreview] = useState('')
@@ -103,7 +112,36 @@ function Feed({ session, onSignOut }) {
     setAvatarPreview(avatarUrl)
   }
 
-  useEffect(() => { loadPosts(); loadProfile() }, [])
+  useEffect(() => {
+    loadPosts(); loadProfile()
+    if ('serviceWorker' in navigator && 'PushManager' in window) navigator.serviceWorker.getRegistration().then(async registration => {
+      if (registration && await registration.pushManager.getSubscription()) setPushEnabled(true)
+    })
+  }, [])
+
+  const enablePush = async () => {
+    setPushBusy(true)
+    setStatus('')
+    try {
+      if (!('serviceWorker' in navigator) || !('PushManager' in window) || !vapidPublicKey) throw new Error('Push notifications are not supported in this browser.')
+      const permission = await Notification.requestPermission()
+      if (permission !== 'granted') throw new Error('Notifications were not allowed. You can enable them in your browser settings.')
+      const registration = await navigator.serviceWorker.register('/sw.js')
+      const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: decodeVapidKey(vapidPublicKey) })
+      const json = subscription.toJSON()
+      const result = await supabase.from('push_subscriptions').upsert({
+        user_id: session.user.id,
+        endpoint: subscription.endpoint,
+        p256dh: json.keys.p256dh,
+        auth: json.keys.auth,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'endpoint' })
+      if (result.error) throw result.error
+      setPushEnabled(true)
+      setStatus('Like notifications are on for this device.')
+    } catch (error) { setStatus(error.message) }
+    setPushBusy(false)
+  }
 
   const toggleLike = async post => {
     const liked = post.likes?.some(like => like.user_id === session.user.id)
@@ -118,6 +156,7 @@ function Feed({ session, onSignOut }) {
       setStatus(result.error.message)
       setPosts(current => current.map(item => item.id === post.id ? { ...item, likes: post.likes || [] } : item))
     }
+    else if (!liked) supabase.functions.invoke('notify-like', { body: { postId: post.id } }).catch(() => {})
   }
 
   const addComment = async postId => {
@@ -206,6 +245,7 @@ function Feed({ session, onSignOut }) {
         <div className="profile-identity"><h2>{profile?.display_name || 'Nailed It member'}</h2><p>@{profile?.username || 'freshset'}</p></div>
         <textarea maxLength="160" value={bio} onChange={event => setBio(event.target.value)} placeholder="Add a short bio…" />
         <button className="profile-save" disabled={profileBusy} onClick={updateProfile}>{profileBusy ? 'SAVING…' : 'SAVE PROFILE'}</button>
+        <div className="push-setting"><div><b>{pushEnabled ? '♥ Like notifications are on' : 'Get notified about likes'}</b><p>{pushEnabled ? 'This device will receive push alerts.' : 'Allow Nailed It to alert this device when someone likes your post.'}</p></div>{!pushEnabled && <button disabled={pushBusy} onClick={enablePush}>{pushBusy ? 'WAIT…' : 'ENABLE'}</button>}</div>
         {status && <p className="form-message" role="status">{status}</p>}
       </section>}
       <section className="stream-title"><div><p className="kicker">{tab === 'profile' ? 'YOUR PROFILE' : 'YOUR PRIVATE CIRCLE'}</p><h1>{tab === 'profile' ? 'My sets.' : 'Fresh sets.'}</h1></div><span>{visiblePosts.length} {visiblePosts.length === 1 ? 'POST' : 'POSTS'}</span></section>
