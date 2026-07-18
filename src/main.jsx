@@ -63,6 +63,7 @@ function Feed({ session, onSignOut }) {
   const [profile, setProfile] = useState(null)
   const [bio, setBio] = useState('')
   const [avatarPreview, setAvatarPreview] = useState('')
+  const [avatarFile, setAvatarFile] = useState(null)
   const [profileBusy, setProfileBusy] = useState(false)
   const [openComments, setOpenComments] = useState(null)
   const [commentDraft, setCommentDraft] = useState('')
@@ -129,20 +130,36 @@ function Feed({ session, onSignOut }) {
     setCommentDraft('')
   }
 
-  const updateProfile = async avatarFile => {
+  const prepareAvatar = file => new Promise((resolve, reject) => {
+    const image = new Image()
+    const url = URL.createObjectURL(file)
+    image.onload = () => {
+      const size = Math.min(image.naturalWidth, image.naturalHeight)
+      const canvas = document.createElement('canvas')
+      canvas.width = 720; canvas.height = 720
+      const context = canvas.getContext('2d')
+      context.drawImage(image, (image.naturalWidth - size) / 2, (image.naturalHeight - size) / 2, size, size, 0, 0, 720, 720)
+      canvas.toBlob(blob => { URL.revokeObjectURL(url); blob ? resolve(blob) : reject(new Error('Could not prepare that image.')) }, 'image/jpeg', .86)
+    }
+    image.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That photo format could not be read. Try a JPG, PNG, or WebP image.')) }
+    image.src = url
+  })
+
+  const updateProfile = async () => {
     setProfileBusy(true)
     setStatus('')
     let avatarPath = profile?.avatar_path || null
     if (avatarFile) {
-      if (avatarFile.size > 5 * 1024 * 1024) { setStatus('Choose a profile image smaller than 5 MB.'); setProfileBusy(false); return }
-      const extension = avatarFile.name.split('.').pop()?.toLowerCase() || 'jpg'
-      avatarPath = `${session.user.id}/avatar.${extension}`
-      const upload = await supabase.storage.from('avatars').upload(avatarPath, avatarFile, { contentType: avatarFile.type, upsert: true })
+      let prepared
+      try { prepared = await prepareAvatar(avatarFile) }
+      catch (error) { setStatus(error.message); setProfileBusy(false); return }
+      avatarPath = `${session.user.id}/avatar.jpg`
+      const upload = await supabase.storage.from('avatars').upload(avatarPath, prepared, { contentType: 'image/jpeg', upsert: true })
       if (upload.error) { setStatus(upload.error.message); setProfileBusy(false); return }
     }
     const result = await supabase.from('profiles').update({ bio: bio.trim() || null, avatar_path: avatarPath, updated_at: new Date().toISOString() }).eq('id', session.user.id)
     if (result.error) setStatus(result.error.message)
-    else { setStatus('Profile updated.'); await loadProfile(); await loadPosts() }
+    else { setStatus('Profile updated.'); setAvatarFile(null); await loadProfile(); await loadPosts() }
     setProfileBusy(false)
   }
 
@@ -184,11 +201,11 @@ function Feed({ session, onSignOut }) {
       {tab === 'profile' && <section className="profile-card">
         <label className="avatar-picker">
           {avatarPreview ? <img src={avatarPreview} alt="Your profile" /> : <span>{(profile?.display_name || 'N').slice(0,1).toUpperCase()}</span>}
-          <b>＋</b><input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={event => { const picked = event.target.files?.[0]; if (picked) { setAvatarPreview(URL.createObjectURL(picked)); updateProfile(picked) } }} />
+          <b>＋</b><input type="file" accept="image/*" onChange={event => { const picked = event.target.files?.[0]; if (picked) { setAvatarFile(picked); setAvatarPreview(URL.createObjectURL(picked)); setStatus('Tap Save Profile to upload your picture.') } }} />
         </label>
         <div className="profile-identity"><h2>{profile?.display_name || 'Nailed It member'}</h2><p>@{profile?.username || 'freshset'}</p></div>
         <textarea maxLength="160" value={bio} onChange={event => setBio(event.target.value)} placeholder="Add a short bio…" />
-        <button className="profile-save" disabled={profileBusy} onClick={() => updateProfile()}>{profileBusy ? 'SAVING…' : 'SAVE PROFILE'}</button>
+        <button className="profile-save" disabled={profileBusy} onClick={updateProfile}>{profileBusy ? 'SAVING…' : 'SAVE PROFILE'}</button>
         {status && <p className="form-message" role="status">{status}</p>}
       </section>}
       <section className="stream-title"><div><p className="kicker">{tab === 'profile' ? 'YOUR PROFILE' : 'YOUR PRIVATE CIRCLE'}</p><h1>{tab === 'profile' ? 'My sets.' : 'Fresh sets.'}</h1></div><span>{visiblePosts.length} {visiblePosts.length === 1 ? 'POST' : 'POSTS'}</span></section>
